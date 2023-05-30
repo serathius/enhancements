@@ -3,6 +3,7 @@ kep-number: 2340
 authors:
   - "@jpbetz"
   - "@wojtek-t"
+  - "@siarkowicz"
 owning-sig: sig-api-machinery
 participating-sigs:
   - sig-scalability

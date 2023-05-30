@@ -51,15 +51,17 @@ Consistent reads may be served from cache so long as:
 - The data in the watch cache no older than the latest "revision" just from etcd
 
 etcd watches support "progress events", which provide an updated revision and a
-guarantee that all future watch events will be newer than the that revision.  If
-an etcd watch is configured with `WithProgressNotify` enabled, etcd
-automatically sends progress events at a regular interval. The "progress events"
-allow a etcd watcher to know how up-to-date the watch stream is relative a
-particular revision.
+guarantee that all future watch events will be newer than the that revision. 
+Etcd client can request a progress notification from server. The progress 
+notification allow the etcd watcher to know how up-to-date the watch stream 
+is. This is thanks to [bookmarkable] property of etcd watch that guarantees that
+all events with revision below progress notification have been delivered.
 
 This KEP summarizes how we can take advantage of progress events efficiently
 determine how up-to-date kubernetes watch caches are then serve reads from the
 watch cache when they are sufficiently up-to-date.
+
+[bookmarkable]: https://etcd.io/docs/v3.6/learning/api_guarantees/#watch-apis
 
 ## Motivation
 
@@ -117,30 +119,18 @@ serves the resourceVersion="0" list requests from reflectors today.
 
 Guard this by a `WatchCacheConsistentReads` feature gate.
 
-#### Use WithProgressNotify to enable automatic watch updates
+#### Use RequestProgress to enable automatic watch updates
 
-Create etcd watches with `WithProgressNotify` enabled (available in all etcd 3.x versions).
+Watch cache will be extended to run a goroutine that will repeatably execute
+`RequestProgress` if there were no watch events within last 250ms.
 
-When `WithProgressNotify` is enabled on an etcd watch, etcd sends progress
-events to the watch automatically. By default etcd sends progress events every
-10 minutes, which is not frequent enough to be useful for our needs, so we will
-modify etcd to send them more frequently.
+Important: This will introduce up to 250ms latency to consistent read requests.
 
-When an consistent LIST request is received and the watch cache is enabled:
+When a consistent LIST request is received and the watch cache is enabled:
 
-- Get the current revision from etcd for the resource type being served. The returned revision is strongly consistent (guaranteed to be the latest revision via a quorum read).
+- Get the current revision from etcd for the resource type being served. Use an etcd range request against a known empty range with limit=1 to ensure returned revision is strongly consistent.
 - Use the existing `waitUntilFreshAndBlock` function in the watch cache to wait briefly for the watch to catch up to the current revision.
 - If the block times out, the request will result in rejection. (see "What if the watch cache is stale?" section for details)
-
-To get the revsion we have some options:
-
-- Use an etcd range request with `WithCount` enabled so etcd return only a count and revision
-- Use an etcd range request against a known empty range with limit=1 as an additional guard (since etcd does not allow for limit=0)
-
-Consistent GET requests will continue to be served directly from etcd. We will
-only serve consistent LIST requests from cache.
-
-Important: We are planning to set the progress notify interval to 250ms, which will introduce up to 250ms latency to consistent LIST requests.
 
 Optional: For some (but not all) of the etcd progress watch events, also create a
 kubernetes "bookmark" watch event and send it to kube-apiserver clients so that

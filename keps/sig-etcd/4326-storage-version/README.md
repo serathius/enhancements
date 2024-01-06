@@ -1,3 +1,5 @@
+# KEP-4326: Offline downgrade support
+
 <!-- toc -->
 - [Motivation](#motivation)
   - [Goals](#goals)
@@ -22,53 +24,53 @@
   - [Backward compatibility mode](#backward-compatibility-mode)
 <!-- /toc -->
 
+## Summary
 
-This document is a followup to [etcd Downgrades Design](https://docs.google.com/document/d/1mSihXRJz8ROhXf4r5WrBGc8aka-b8HKjo2VDllOc6ac/edit?usp=sharing) focusing solely on the issues related to DB file and WAL log. 
-It is meant to address the same issues as in original design and propose alternative solution to etcd data backward compatibility.
+This document proposes introduction of strong versioning semantics into data stored by etcd.
+We plan to add versioning metadata allowing for migration etcd data directory to be compatible with other etcd minor versions.
+This is the first step to make etcd online downgrades a reality.
 
 ## Motivation
-As a fairly successful project etcd is frequently used in production and has become a critical part of infrastructure for many companies.
-A large part of its success can be attributed to it’s great reliability thanks to Raft consensus protocol,
-however the same level of reliability cannot be attributed to upgrade and downgrade processes.
-Upgrades cannot be interrupted or reverted, they require external tooling and downgrades are not really supported at all.
 
-Etcd upgrade process still depends heavily on the “backup before upgrade” strategy as there is no way to safely downgrade etcd data after it was touched by newer version.
-This doesn’t work in practice, as some applications like Kubernetes will not work correctly on data from backup.
-As etcd data is not versioned, projects like Kubernetes needed to develop their own scripts to start and stop all historical etcd versions just to make upgrade automation predictable.
-Etcd data versioning is also important for future implementation of downgrades,
-[Etcd downgrade proposal](https://docs.google.com/document/d/1mSihXRJz8ROhXf4r5WrBGc8aka-b8HKjo2VDllOc6ac/edit?usp=sharing) lists solving the issue of etcd data backward compatibility as one of the prerequisites.
-Introducing strict policies on etcd data versioning will improve reliability of etcd upgrades and unblock the ability of the etcd cluster to downgrade.
+One of the major project concern is lack of adoption of new etcd version.
+It took community a half a year to notice that there were critical issues with the last v3.5 release.
+Even after 2 years since the release, many users are afraid to upgrade as there is no going back if they commit.
+
+Etcd upgrade strategy boils down to back up, pray and restore if something goes wrong.
+Introducing strict policies on etcd data versioning will improve reliability of etcd
+upgrades and unblock the ability of the etcd cluster to downgrade.
 
 ### Goals
-* Allow etcd to load data from failed upgrade
-* Simplify etcd data upgrades process
-* Allow older etcd to safely load data from downgrading member
+* Define the nessesery metadata and semantics of upgrades/downgrades of etcd data directory
+* Provide a tool for migrating the etcd data 
 
 ### Non-Goals
-* Support of etcd version < 3.6
-
-### Terminology
-* Etcd data - Data written by Etcd to disk. Contents of etcd data dir, includes DB file and Wal file
-* DB file - File representation of KV state. For v3.+ it's boltdb file.
-* DB Schema - Versioned representation of information stored within etcd DB file. Put simpler: names of all fields used in DB file and their meaning.
-* Field - Describes how particular information should be stored in boltdb. Combination of boltdb bucket, key used to store, semantic meaning of value and marshalling method used.
-* Subfield - Some fields have a composite of multiple values needed to convey some information that are stored under the same boltdb key (for example DowngradeInfo).
-
+* Online downgrade
 
 ## Proposal
 
-Introduce etcd storage version (SV) that is stored and persisted within the etcd DB file.
-The SV should be used to indicate which version particular etcd data is compatible with and allow to conduct safe upgrades and downgrades of the etcd data contents.
-To simplify etcd data upgrade and downgrade process we will also introduce etcdutl migrate command that will remove the need to start and stop all etcd server versions on 2+ minor upgrades jump
+* Introduce a storage version (SV) field, a member local field, indicating which etcd minor version data files are compatible with.
+* Introduce an etcd version annotation to etcd db fields and WAL proto fields and enums values informing which version they come from
+* Define an etcd schema with strict semantics for upgrade/downgrades of etcd data
+* Introduce an `etcdutl migrate` command
 
 ## Storage version
 
-The storage version is represented as a “Major.Minor” and should match etcd version that created the storage.
+The storage version will be the second versioning field added to the etcd data files. It will be responsible to guarantee 
+compatibility on the data files, while the cluster version will provide the API compability. Both will point to the
+etcd minor version and be stored in etcd db file under the `cluster` bucket.
 
-For storage to be at particular version it means that:
+Having a separate field is required to due to difference in semanics required for their purpose. As cluster version is 
+decided on cluster level to establish compatibility of the API, the storage version will be local to the member. 
+Locality allows storage version to be changed by external tools without need of a whole cluster with quorum.
+
+The guarantees of the storage version:
 * DB file has all fields that are used by matching etcd version
 * DB file doesn’t include any fields or subfields added in newer etcd versions
 * WAL files (from last snapshot and newer) don’t include any newer entries or fields.
+
+Changes to storage version requires to:
+* 
 
 DB fields to be backward compatible they should not have any information that would be incorrectly interpreted.
 Even if some fields would be untouched by older etcd versions, it should be up to newer etcd to clean them up.

@@ -123,6 +123,25 @@ a robust mechanism for detecting inconsistencies is crucial.
 Therefore, we propose an automatic mechanism to validate cache consistency with etcd,
 providing users with confidence in the cache's accuracy without requiring manual debugging efforts.
 
+### Risks and Mitigations
+
+#### Memory overhead
+
+B-tree snapshots are designed to minimize memory overhead by storing pointers to
+the actual objects, rather than the objects themselves. Since the objects are
+already cached to serve watch events, the primary memory impact comes from the
+B-tree structure itself. To quantify the memory overhead, we run 5k scalability tests.
+They should represent the worst case scenario, as they utilize large number of small objects.
+The results are promising:
+
+* **Object Allocations:** Allocation profile collected during the test test has
+  shown an increase of 7GB in object allocations, which translates to a
+  negligible 0.2% of total allocations.
+* **Memory Usage:** Memory in use profile collected during the test has shown
+  Btree memory usage of 300MB, representing a 1.3% of total memory used.
+
+## Design Details
+
 ### Snapshotting
 
 1. **Snapshot Creation:** When a watch event is received, the cacher creates
@@ -186,23 +205,6 @@ apiserver_storage_hash{resource="pods", storage="etcd", hash="f364dcd6b58ebf020c
 apiserver_storage_hash{resource="pods", storage="cache", hash="f364dcd6b58ebf020cec3fe415e726ab16425b4d0344ac6b551d2769dd01b251"} 1
 ```
 Metric values for each resource should be updated atomically to prevent false positives.
-
-### Risks and Mitigations
-
-#### Memory overhead
-
-B-tree snapshots are designed to minimize memory overhead by storing pointers to
-the actual objects, rather than the objects themselves. Since the objects are
-already cached to serve watch events, the primary memory impact comes from the
-B-tree structure itself. To quantify the memory overhead, we run 5k scalability tests.
-They should represent the worst case scenario, as they utilize large number of small objects.
-The results are promising:
-
-* **Object Allocations:** Allocation profile collected during the test test has
-  shown an increase of 7GB in object allocations, which translates to a
-  negligible 0.2% of total allocations.
-* **Memory Usage:** Memory in use profile collected during the test has shown
-  Btree memory usage of 300MB, representing a 1.3% of total memory used.
 
 ### Test Plan
 
@@ -384,6 +386,8 @@ For the first iteration we will enable users to define an alert on a metric and 
 Disabling the feature-gate.
 
 ## Implementation History
+
+- 1.33: KEP proposed and approved for implementation
 
 ## Drawbacks
 
